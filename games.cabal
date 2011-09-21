@@ -1,0 +1,18 @@
+Name:          games
+Version:       0.0
+Description:   Combinatorial game exploration code
+License:       BSD3
+License-file:  LICENSE
+Author:        Geoffrey Irving
+Maintainer:    irving@naml.us
+Build-Type:    Simple
+Cabal-Version: >=1.2
+
+Executable tests
+  Main-is:       Tests.hs
+  Build-Depends: base >= 3 && < 5,
+                 QuickCheck >= 2.4.1.1,
+                 test-framework >= 0.4.1.1,
+                 test-framework-quickcheck2 >= 0.2.10,
+                 test-framework-th >= 0.2.2
+  Ghc-Options:   -Wall -Werror -threaded -fno-warn-name-shadowing -fno-warn-missing-signatures
