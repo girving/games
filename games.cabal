@@ -11,7 +11,9 @@ Cabal-Version: >=1.2
 Executable tests
   Main-is:       Tests.hs
   Build-Depends: base >= 3 && < 5,
-                 QuickCheck >= 2.4.1.1,
+                 containers >= 0.4.0.0,
+                 mtl >= 2.0.1.0,
+                 QuickCheck >= 2.4,
                  test-framework >= 0.4.1.1,
                  test-framework-quickcheck2 >= 0.2.10,
                  test-framework-th >= 0.2.2

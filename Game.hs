@@ -1,11 +1,12 @@
-{-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE PatternGuards, TemplateHaskell #-}
 -- | Combinatorial Games
 
 module Game 
   ( Game(..)
   , PartialOrd(..)
-  , isnumber, unnumber
-  , sections, left, right
+  , Dyadic, half
+  , isnumber, number, unnumber
+  , sections, leftSection, rightSection
   , zero, star, up, down
   , gameTests
   ) where
@@ -16,6 +17,7 @@ import Data.Bits hiding (shift)
 import Test.QuickCheck hiding ((.&.))
 import Test.Framework.TH
 import Test.Framework.Providers.QuickCheck2
+import Util
 
 data Game = Game [Game] [Game]
 
@@ -44,10 +46,37 @@ instance Eq Game where
 -- Display
 
 instance Show Game where
-  -- show x | Just n <- unnumber x = show n
-  -- show x | x == star = "*"
+  show x | Just n <- unnumber x = show n
+  show x | x == star = "*"
   show (Game l r) = "{" ++ s l ++ "|" ++ s r ++ "}" where
     s g = intercalate "," $ map show g
+
+-- Dyadic rationals
+
+newtype Dyadic = Dyadic { unDyadic :: Rational }
+  deriving (Eq, Ord)
+
+instance Show Dyadic where
+  show (Dyadic x) | denominator x == 1 = show (numerator x)
+  show (Dyadic x) = show (numerator x) ++ "/" ++ show (denominator x)
+
+instance Num Dyadic where
+  Dyadic x + Dyadic y = Dyadic $ x + y
+  Dyadic x * Dyadic y = Dyadic $ x * y
+  negate (Dyadic x) = Dyadic $ negate x
+  fromInteger = Dyadic . fromInteger
+  abs (Dyadic x) = Dyadic $ abs x
+  signum (Dyadic x) = Dyadic $ signum x
+
+half :: Dyadic -> Dyadic
+half (Dyadic x) = Dyadic $ x / 2
+
+instance Arbitrary Dyadic where
+  arbitrary = sized g where
+    g s = do
+      a <- choose (-s,s)
+      b <- shiftL 1 =.< choose (0,s)
+      return $ Dyadic $ toInteger a % b
 
 -- Numbers
 
@@ -77,20 +106,19 @@ instance Num Game where
 isPowerOfTwo :: (Integral t, Bits t) => t -> Bool
 isPowerOfTwo x = (x .&. (x-1)) == 0
 
-number :: Rational -> Game
-number x =
-  if not $ isPowerOfTwo $ denominator x then
-    error $ "number "++show x++" cannot be represented as a short game"
-  else f (numerator x) (denominator x) where
-    f n 1 = fromInteger n
-    f a b = Game [f (quot (a-1) 2) (quot b 2)] [f (quot (a+1) 2) (quot b 2)]
+number :: Dyadic -> Game
+number = f . unDyadic where
+  f x | denominator x == 1 = fromInteger $ numerator x
+  f x = Game [f ((a-1) % b)] [f ((a+1) % b)] where
+    a = numerator x
+    b = denominator x
 
 isnumber :: Game -> Bool
 isnumber (Game ll rr) = all (\l -> all (l <.) rr) ll
 
 -- Either slightly to the left of a number, or slightly to the right
 data Side = SLeft | SRight deriving (Eq, Show)
-data Section = Section Rational Side deriving (Eq, Show)
+data Section = Section Dyadic Side deriving (Eq, Show)
 
 instance Ord Section where
   Section x SRight <= Section y SLeft = x < y
@@ -98,27 +126,31 @@ instance Ord Section where
 
 sections :: Game -> (Section, Section)
 sections (Game l r) = if lv < rv then (Section mv SLeft, Section mv SRight) else (lv,rv) where
-  lv = maximum $ Section (-large) SLeft : map right l
-  rv = minimum $ Section   large  SLeft : map left r
+  lv = maximum $ Section (-large) SLeft : map rightSection l
+  rv = minimum $ Section   large  SLeft : map leftSection r
   mv = between lv rv
   large = 100000
 
-left :: Game -> Section
-left g = fst $ sections g
+leftSection :: Game -> Section
+leftSection g = fst $ sections g
 
-right :: Game -> Section
-right g = snd $ sections g
+rightSection :: Game -> Section
+rightSection g = snd $ sections g
 
-between :: Section -> Section -> Rational
-between (Section x xs) (Section y ys) = half (shift x xs) (shift y ys) where
-  small = 1 % (2 * max (denominator x) (denominator y))
+between :: Section -> Section -> Dyadic
+between (Section x xs) (Section y ys) = find (shift x xs) (shift y ys - small) where
+  small = Dyadic $ 1 % (2 * max (denominator $ unDyadic x) (denominator $ unDyadic y))
   shift n SRight = n + small
   shift n SLeft = n
-  half x y = if c < y then c else half (x+x) (y+y) / 2 where
-    c = fromIntegral (ceiling x :: Integer)
+  -- find the simplest dyadic rational in a closed dyadic rational interval
+  find :: Dyadic -> Dyadic -> Dyadic
+  find x y = if nx <= ny then fromInteger ns else half $ find (x+x) (y+y) where
+    nx = ceiling $ unDyadic x
+    ny = floor $ unDyadic y
+    ns = if nx >= 0 then nx else if ny <= 0 then ny else 0
 
-unnumber :: Game -> Maybe Rational
-unnumber x | isnumber x = Just n where Section n _ = left x
+unnumber :: Game -> Maybe Dyadic
+unnumber x | isnumber x = Just n where Section n _ = leftSection x
 unnumber _ = Nothing
 
 -- Simple games
@@ -131,14 +163,41 @@ down = Game [star] [zero]
 -- Testing
 
 instance Arbitrary Game where
-  arbitrary = sized g where 
+  arbitrary = sized (g . min 4) where 
     g 0 = return zero
     g n = do
-      let children = resize (n-1) arbitrary
+      let children = resize 2 $ listOf $ g (n-1)
       l <- children
       r <- children
       return $ Game l r
 
+prop_equal :: Game -> Bool
+prop_equal x = x == x
+
+prop_numberEqual :: Dyadic -> Dyadic -> Bool
+prop_numberEqual x y = (x == y) == (number x == number y)
+
+prop_number :: Dyadic -> Bool
 prop_number n = Just n == unnumber (number n)
+
+prop_negate :: Game -> Bool
+prop_negate x = negate (negate x) == x
+
+prop_plus_commute :: Game -> Game -> Bool
+prop_plus_commute x y = x + y == y + x
+
+{- These are currently too slow:
+-- prop_plus_assoc :: Game -> Game -> Game -> Bool
+-- prop_plus_assoc x y z = debug (x,y,z) $ (x + y) + z == x + (y + z)
+
+-- prop_times_commute :: Game -> Game -> Bool
+-- prop_times_commute x y = x * y == y * x
+
+-- prop_times_assoc :: Game -> Game -> Game -> Bool
+-- prop_times_assoc x y z = (x * y) * z == x * (y * z)
+
+-- prop_distribute :: Game -> Game -> Game -> Bool
+-- prop_distribute x y z = (x + y) * z == x * z + y * z
+-}
 
 gameTests = $(testGroupGenerator)
