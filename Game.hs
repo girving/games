@@ -2,7 +2,7 @@
 -- | Combinatorial Games
 
 module Game 
-  ( Game
+  ( Game, game
   , PartialOrd(..)
   , Dyadic, half
   , isnumber, number, unnumber
